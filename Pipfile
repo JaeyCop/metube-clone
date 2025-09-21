@@ -13,6 +13,8 @@ yt-dlp = { version = "*", extras = ["default", "curl-cffi"] }
 mutagen = "*"
 curl-cffi = "*"
 watchfiles = "*"
+spotipy = "*"
+requests = "*"
 
 [requires]
 python_version = "3.13"

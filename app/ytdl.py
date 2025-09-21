@@ -389,6 +389,223 @@ class DownloadQueue:
             return {'status': 'ok'}
         return {'status': 'error', 'msg': f'Unsupported resource "{etype}"'}
 
+    def __is_spotify_url(self, url):
+        """Check if the URL is a Spotify URL"""
+        from spotify_utils import get_spotify_extractor
+        extractor = get_spotify_extractor()
+        return extractor.is_spotify_url(url)
+
+    def __get_spotify_content_type(self, url):
+        """Determine the type of Spotify content"""
+        from spotify_utils import get_spotify_extractor
+        extractor = get_spotify_extractor()
+        return extractor.get_content_type(url)
+        
+    async def __search_youtube_for_track(self, track_info, max_attempts=5):
+        """Search YouTube for a track using multiple search strategies with quality filtering"""
+        from spotify_utils import SpotifyTrackInfo
+        
+        if not isinstance(track_info, SpotifyTrackInfo):
+            return None
+            
+        search_queries = track_info.get_search_query_alternatives()
+        
+        for attempt, query in enumerate(search_queries[:max_attempts]):
+            try:
+                log.info(f"Searching YouTube for: {query} (attempt {attempt + 1}/{max_attempts})")
+                
+                # Search for multiple results to find best match
+                search_url = f"ytsearch5:{query}"
+                search_result = await asyncio.get_running_loop().run_in_executor(
+                    None, self.__extract_info, search_url, True
+                )
+                
+                if search_result and 'entries' in search_result and search_result['entries']:
+                    best_video = self.__select_best_video(search_result['entries'], track_info)
+                    if best_video:
+                        log.info(f"Found YouTube video: {best_video.get('title', 'Unknown')} - {best_video.get('webpage_url', '')}")
+                        return best_video.get('webpage_url')
+                    
+            except Exception as e:
+                log.warning(f"YouTube search attempt {attempt + 1} failed for '{query}': {e}")
+                continue
+                
+        log.warning(f"Could not find YouTube video for track: {track_info.get_search_query()}")
+        return None
+        
+    def __select_best_video(self, videos, track_info):
+        """Select the best video from search results based on quality indicators"""
+        from spotify_utils import SpotifyTrackInfo
+        
+        if not videos:
+            return None
+            
+        # If only one result, return it
+        if len(videos) == 1:
+            return videos[0]
+            
+        scored_videos = []
+        track_duration = track_info.duration_ms / 1000.0 if track_info.duration_ms > 0 else None
+        
+        for video in videos:
+            score = 0
+            title = video.get('title', '').lower()
+            duration = video.get('duration', 0)
+            view_count = video.get('view_count', 0)
+            uploader = video.get('uploader', '').lower()
+            
+            # Prefer official uploads and verified channels
+            if any(indicator in uploader for indicator in ['official', 'records', 'music', 'vevo']):
+                score += 30
+            if any(indicator in title for indicator in ['official', 'music video', 'audio']):
+                score += 20
+                
+            # Prefer videos with reasonable view counts (but not too low or suspiciously high)
+            if view_count > 1000:
+                score += 10
+            if view_count > 100000:
+                score += 10
+            if view_count > 1000000:
+                score += 5
+                
+            # Duration matching (if we have Spotify duration)
+            if track_duration and duration:
+                duration_diff = abs(duration - track_duration)
+                if duration_diff < 10:  # Within 10 seconds
+                    score += 25
+                elif duration_diff < 30:  # Within 30 seconds
+                    score += 15
+                elif duration_diff < 60:  # Within 1 minute
+                    score += 5
+                elif duration_diff > 300:  # More than 5 minutes off
+                    score -= 15
+                    
+            # Penalize very short or very long videos (likely not the track)
+            if duration:
+                if duration < 30:  # Too short
+                    score -= 20
+                elif duration > 600:  # Over 10 minutes, likely not a single track
+                    score -= 10
+                    
+            # Prefer videos that don't have live/remix/cover indicators (unless original is remix)
+            original_is_remix = any(term in track_info.name.lower() for term in ['remix', 'mix', 'edit'])
+            if not original_is_remix:
+                if any(term in title for term in ['live', 'cover', 'remix', 'karaoke', 'instrumental']):
+                    score -= 15
+                    
+            # Prefer audio-only or music videos over other content
+            if any(term in title for term in ['audio', 'lyrics', 'music video']):
+                score += 10
+                
+            scored_videos.append((score, video))
+            
+        # Sort by score (highest first) and return best match
+        scored_videos.sort(key=lambda x: x[0], reverse=True)
+        
+        best_video = scored_videos[0][1]
+        log.info(f"Selected video with score {scored_videos[0][0]}: {best_video.get('title', 'Unknown')}")
+        
+        return best_video
+        
+    async def __process_spotify_content(self, url, quality, format, folder, custom_name_prefix, playlist_strict_mode, playlist_item_limit, auto_start, already):
+        """Process Spotify URLs by extracting metadata and searching YouTube"""
+        from spotify_utils import get_spotify_extractor
+        
+        extractor = get_spotify_extractor(
+            client_id=self.config.SPOTIFY_CLIENT_ID or self.config.YTDL_OPTIONS.get('spotify_client_id'),
+            client_secret=self.config.SPOTIFY_CLIENT_SECRET or self.config.YTDL_OPTIONS.get('spotify_client_secret')
+        )
+        
+        content_type = extractor.get_content_type(url)
+        log.info(f"Processing Spotify {content_type}: {url}")
+        
+        tracks = []
+        
+        try:
+            if content_type == 'track':
+                track = await extractor.extract_track_metadata(url)
+                if track:
+                    tracks = [track]
+                    
+            elif content_type == 'album':
+                tracks = await extractor.extract_album_metadata(url)
+                
+            elif content_type == 'playlist':
+                tracks = await extractor.extract_playlist_metadata(url)
+                
+            else:
+                # For podcasts and other content, let the original handler deal with it
+                return None
+                
+        except Exception as e:
+            log.error(f"Failed to extract Spotify metadata: {e}")
+            return {'status': 'error', 'msg': f'Failed to extract Spotify metadata: {str(e)}'}
+            
+        if not tracks:
+            if content_type in ['track', 'album', 'playlist']:
+                return {'status': 'error', 'msg': f'No tracks found in Spotify {content_type}. This might require Spotify API credentials (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET).'}
+            else:
+                return None  # Let original handler process podcasts/episodes
+                
+        log.info(f"Found {len(tracks)} tracks in Spotify {content_type}")
+        
+        # Apply playlist item limit if specified
+        if playlist_item_limit > 0 and len(tracks) > playlist_item_limit:
+            log.info(f"Limiting to first {playlist_item_limit} tracks")
+            tracks = tracks[:playlist_item_limit]
+            
+        successful_downloads = 0
+        failed_downloads = 0
+        
+        for i, track in enumerate(tracks, 1):
+            try:
+                log.info(f"Processing track {i}/{len(tracks)}: {track.get_search_query()}")
+                
+                # Search for the track on YouTube
+                youtube_url = await self.__search_youtube_for_track(track)
+                
+                if youtube_url:
+                    # Create a custom name prefix that includes track info
+                    track_prefix = custom_name_prefix
+                    if content_type in ['album', 'playlist']:
+                        if track_prefix:
+                            track_prefix += f".{i:02d}_{track.artists[0]}_{track.name}"
+                        else:
+                            track_prefix = f"{i:02d}_{track.artists[0]}_{track.name}"
+                        # Clean the prefix (remove invalid filename characters)
+                        track_prefix = re.sub(r'[<>:"/\\|?*]', '_', track_prefix)
+                    
+                    # Add the YouTube video to the download queue
+                    result = await self.add(
+                        youtube_url, quality, format, folder, track_prefix,
+                        True,  # playlist_strict_mode = True for individual videos
+                        0,     # playlist_item_limit = 0 for individual videos  
+                        auto_start, already
+                    )
+                    
+                    if result.get('status') == 'ok':
+                        successful_downloads += 1
+                        log.info(f"Successfully queued: {track.get_search_query()}")
+                    else:
+                        failed_downloads += 1
+                        log.warning(f"Failed to queue: {track.get_search_query()} - {result.get('msg', 'Unknown error')}")
+                else:
+                    failed_downloads += 1
+                    log.warning(f"Could not find YouTube video for: {track.get_search_query()}")
+                    
+            except Exception as e:
+                failed_downloads += 1
+                log.error(f"Error processing track {track.get_search_query()}: {e}")
+                
+        # Return summary result
+        if successful_downloads > 0:
+            msg = f"Successfully queued {successful_downloads} tracks from Spotify {content_type}"
+            if failed_downloads > 0:
+                msg += f" ({failed_downloads} tracks could not be found on YouTube)"
+            return {'status': 'ok', 'msg': msg}
+        else:
+            return {'status': 'error', 'msg': f'Could not find any tracks from Spotify {content_type} on YouTube'}
+
     async def add(self, url, quality, format, folder, custom_name_prefix, playlist_strict_mode, playlist_item_limit, auto_start=True, already=None):
         log.info(f'adding {url}: {quality=} {format=} {already=} {folder=} {custom_name_prefix=} {playlist_strict_mode=} {playlist_item_limit=}')
         already = set() if already is None else already
@@ -397,10 +614,39 @@ class DownloadQueue:
             return {'status': 'ok'}
         else:
             already.add(url)
+
+        # Special handling for Spotify URLs
+        if self.__is_spotify_url(url):
+            content_type = self.__get_spotify_content_type(url)
+            log.info(f'Spotify {content_type} URL detected: {url}')
+            
+            # Try to process Spotify music content by searching YouTube
+            if content_type in ['track', 'album', 'playlist']:
+                log.info(f'Processing Spotify {content_type} by searching for tracks on YouTube')
+                spotify_result = await self.__process_spotify_content(
+                    url, quality, format, folder, custom_name_prefix, 
+                    playlist_strict_mode, playlist_item_limit, auto_start, already
+                )
+                if spotify_result is not None:
+                    return spotify_result
+                # If spotify_result is None, fall through to try direct download (for podcasts)
+            elif content_type in ['podcast', 'episode']:
+                log.info(f'Attempting to process Spotify {content_type} content - this may or may not work due to DRM restrictions')
+
         try:
             entry = await asyncio.get_running_loop().run_in_executor(None, self.__extract_info, url, playlist_strict_mode)
         except yt_dlp.utils.YoutubeDLError as exc:
-            return {'status': 'error', 'msg': str(exc)}
+            error_msg = str(exc)
+            if self.__is_spotify_url(url):
+                # Enhance error message for Spotify URLs
+                if 'DRM' in error_msg:
+                    error_msg += ' Most Spotify content is DRM-protected and cannot be downloaded. Only some podcast content may be accessible.'
+                elif 'blocked' in error_msg.lower() or '403' in error_msg:
+                    error_msg += ' Spotify has blocked access to this content. Try using official Spotify features instead.'
+                log.error(f'Spotify extraction failed: {error_msg}')
+            else:
+                log.error(f'Extraction failed: {error_msg}')
+            return {'status': 'error', 'msg': error_msg}
         return await self.__add_entry(entry, quality, format, folder, custom_name_prefix, playlist_strict_mode, playlist_item_limit, auto_start, already)
 
     async def start_pending(self, ids):

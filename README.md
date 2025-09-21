@@ -5,9 +5,23 @@
 ![Build Status](https://github.com/alexta69/metube/actions/workflows/main.yml/badge.svg)
 ![Docker Pulls](https://img.shields.io/docker/pulls/alexta69/metube.svg)
 
-Web GUI for youtube-dl (using the [yt-dlp](https://github.com/yt-dlp/yt-dlp) fork) with playlist support. Allows you to download videos from YouTube and [dozens of other sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
+Web GUI for youtube-dl (using the [yt-dlp](https://github.com/yt-dlp/yt-dlp) fork) with playlist support. Allows you to download videos from YouTube and [dozens of other sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md). Now includes intelligent Spotify URL handling with content-aware messaging and support for podcast content.
 
 ![screenshot1](https://github.com/alexta69/metube/raw/master/screenshot.gif)
+
+## Spotify Integration 🎵
+
+MeTube now includes intelligent Spotify support that extracts playlist/album metadata and searches for tracks on YouTube:
+
+- **🎵 Smart Processing**: Automatically extracts track metadata from Spotify URLs
+- **🔍 YouTube Search**: Uses multiple search strategies to find best matches
+- **📁 Organized Downloads**: Creates properly named files with track numbers
+- **⚡ Batch Processing**: Handles entire playlists and albums efficiently
+- **🎙️ Podcast Support**: Direct download attempts for podcast content
+
+**Quick Start**: Paste any Spotify playlist URL and watch MeTube automatically extract tracks and find them on YouTube!
+
+For setup instructions, see [SETUP_SPOTIFY_API.md](SETUP_SPOTIFY_API.md) | For detailed features, see [SPOTIFY_SUPPORT.md](SPOTIFY_SUPPORT.md)
 
 ## Run using Docker
 
@@ -60,6 +74,22 @@ Certain values can be set via environment variables, using the `-e` parameter on
 * __DEFAULT_OPTION_PLAYLIST_STRICT_MODE__: if `true`, the "Strict Playlist mode" switch will be enabled by default. In this mode the playlists will be downloaded only if the url strictly points to a playlist. Urls to videos inside a playlist will be treated same as direct video url. Defaults to `false` .
 * __DEFAULT_OPTION_PLAYLIST_ITEM_LIMIT__: Maximum number of playlist items that can be downloaded. Defaults to `0` (no limit).
 * __YTDL_OPTIONS__: Additional options to pass to yt-dlp, in JSON format. [See available options here](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/YoutubeDL.py#L220). They roughly correspond to command-line options, though some do not have exact equivalents here, for example `--recode-video` has to be specified via `postprocessors`. Also note that dashes are replaced with underscores. You may find [this script](https://github.com/yt-dlp/yt-dlp/blob/master/devscripts/cli_to_api.py) helpful for converting from command line options to `YTDL_OPTIONS`.
+
+### Spotify Integration 🎵
+
+MeTube includes intelligent Spotify support that extracts playlist/album metadata and searches for tracks on YouTube:
+
+* __SPOTIFY_CLIENT_ID__: Spotify API Client ID (optional but recommended) - get from [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+* __SPOTIFY_CLIENT_SECRET__: Spotify API Client Secret (optional but recommended)
+* Alternatively, set via __YTDL_OPTIONS__: `{"spotify_client_id": "your_id", "spotify_client_secret": "your_secret"}`
+
+**Features:**
+- ✅ Spotify tracks/albums/playlists → automatic YouTube search and download
+- ✅ Smart search strategies with quality filtering
+- ✅ Organized downloads with proper naming
+- ✅ Works without API credentials (limited functionality using web scraping)
+
+**Example usage:** Paste any Spotify playlist URL and MeTube will extract all tracks, search for them on YouTube, and download the best matches!
 * __YTDL_OPTIONS_FILE__: A path to a JSON file that will be loaded and used for populating `YTDL_OPTIONS` above. Please note that if both `YTDL_OPTIONS_FILE` and `YTDL_OPTIONS` are specified, the options in `YTDL_OPTIONS` take precedence.
 * __ROBOTS_TXT__: A path to a `robots.txt` file mounted in the container
 * __DOWNLOAD_MODE__ :This flag controls how downloads are scheduled and executed. Options are `sequential`, `concurrent`, and `limited`.  Defaults to `limited`:

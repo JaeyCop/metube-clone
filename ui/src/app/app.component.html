@@ -77,10 +77,11 @@
                    autocomplete="off" 
                    spellcheck="false" 
                    class="form-control form-control-lg" 
-                   placeholder="Enter video or playlist URL" 
+                   placeholder="Enter video, playlist, or Spotify URL" 
                    name="addUrl" 
                    [(ngModel)]="addUrl" 
-                   [disabled]="addInProgress || downloads.loading">
+                   [disabled]="addInProgress || downloads.loading"
+                   (input)="onUrlInput()">
             <button class="btn btn-primary btn-lg px-4" 
                     type="submit" 
                     (click)="addDownload()" 
@@ -88,6 +89,27 @@
               <span class="spinner-border spinner-border-sm" role="status" id="add-spinner" *ngIf="addInProgress"></span>
               {{ addInProgress ? "Adding..." : "Download" }}
             </button>
+          </div>
+          <!-- Spotify URL Integration Info -->
+          <div class="alert alert-info mt-2" *ngIf="isSpotifyUrl && addUrl && isSpotifyMusicContent()">
+            <fa-icon [icon]="faExclamationTriangle" class="me-2"></fa-icon>
+            <div>
+              <strong>🎵 Spotify {{getSpotifyContentType() | titlecase}} Detected:</strong>
+              <div class="mt-1">{{getSpotifyMessage()}}</div>
+              <div class="mt-2 small">
+                <strong>💡 {{getSpotifyTips()}}</strong>
+              </div>
+              <div class="mt-1 small text-muted">
+                <strong>How it works:</strong> MeTube extracts track metadata → searches YouTube with multiple strategies → downloads best matches with organized naming.
+              </div>
+            </div>
+          </div>
+          
+          <!-- Spotify Podcast Content -->
+          <div class="alert alert-warning mt-2" *ngIf="isSpotifyUrl && addUrl && !isSpotifyMusicContent()">
+            <fa-icon [icon]="faExclamationTriangle" class="me-2"></fa-icon>
+            <strong>Spotify {{getSpotifyContentType() | titlecase}} Detected:</strong>
+            {{getSpotifyMessage()}}
           </div>
         </div>
       </div>

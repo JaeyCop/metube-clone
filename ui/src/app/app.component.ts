@@ -1,7 +1,7 @@
 import { Component, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { faTrashAlt, faCheckCircle, faTimesCircle, IconDefinition } from '@fortawesome/free-regular-svg-icons';
-import { faRedoAlt, faSun, faMoon, faCircleHalfStroke, faCheck, faExternalLinkAlt, faDownload, faFileImport, faFileExport, faCopy, faClock, faTachometerAlt } from '@fortawesome/free-solid-svg-icons';
+import { faRedoAlt, faSun, faMoon, faCircleHalfStroke, faCheck, faExternalLinkAlt, faDownload, faFileImport, faFileExport, faCopy, faClock, faTachometerAlt, faExclamationTriangle } from '@fortawesome/free-solid-svg-icons';
 import { faGithub } from '@fortawesome/free-brands-svg-icons';
 import { CookieService } from 'ngx-cookie-service';
 import { map, Observable, of, distinctUntilChanged } from 'rxjs';
@@ -43,6 +43,7 @@ export class AppComponent implements AfterViewInit {
   ytDlpVersion: string | null = null;
   metubeVersion: string | null = null;
   isAdvancedOpen = false;
+  isSpotifyUrl = false;
 
   // Download metrics
   activeDownloads = 0;
@@ -77,6 +78,7 @@ export class AppComponent implements AfterViewInit {
   faGithub = faGithub;
   faClock = faClock;
   faTachometerAlt = faTachometerAlt;
+  faExclamationTriangle = faExclamationTriangle;
 
   constructor(public downloads: DownloadsService, private cookieService: CookieService, private http: HttpClient) {
     this.format = cookieService.get('metube_format') || 'any';
@@ -252,6 +254,68 @@ export class AppComponent implements AfterViewInit {
     this.quality = exists ? this.quality : 'best'
   }
 
+  onUrlInput() {
+    this.isSpotifyUrl = this.detectSpotifyUrl(this.addUrl);
+  }
+
+  detectSpotifyUrl(url: string): boolean {
+    if (!url) return false;
+    const spotifyRegex = /^https?:\/\/(open\.spotify\.com|spotify:)/i;
+    return spotifyRegex.test(url);
+  }
+
+  getSpotifyContentType(): string {
+    if (!this.addUrl || !this.isSpotifyUrl) return 'unknown';
+    
+    if (this.addUrl.includes('/track/')) return 'track';
+    if (this.addUrl.includes('/album/')) return 'album';
+    if (this.addUrl.includes('/playlist/')) return 'playlist';
+    if (this.addUrl.includes('/show/') || this.addUrl.includes('/podcast/')) return 'podcast';
+    if (this.addUrl.includes('/episode/')) return 'episode';
+    
+    return 'unknown';
+  }
+
+  getSpotifyMessage(): string {
+    const contentType = this.getSpotifyContentType();
+    
+    switch (contentType) {
+      case 'track':
+        return 'MeTube will extract track metadata from Spotify and search for the best YouTube match using multiple search strategies.';
+      case 'album':
+        return 'MeTube will extract all tracks from this album and search for each one on YouTube. Large albums may take some time to process.';
+      case 'playlist':
+        return 'MeTube will extract all tracks from this playlist and search for each one on YouTube. You can limit the number of tracks in advanced options.';
+      case 'podcast':
+      case 'episode':
+        return 'MeTube will attempt to download this podcast content directly (may not work due to DRM restrictions).';
+      default:
+        return 'MeTube will attempt to process this Spotify content using intelligent search strategies.';
+    }
+  }
+
+  getSpotifyTips(): string {
+    const contentType = this.getSpotifyContentType();
+    
+    switch (contentType) {
+      case 'track':
+        return 'Tip: Set quality to "audio" for music downloads. The search uses artist name and track title for best accuracy.';
+      case 'album':
+      case 'playlist':
+        return 'Tips: Use custom folders to organize downloads. Set playlist item limits to process in batches. Enable Spotify API credentials for better metadata.';
+      case 'podcast':
+      case 'episode':
+        return 'Note: Podcast availability depends on DRM restrictions and regional licensing.';
+      default:
+        return 'For best results, configure Spotify API credentials in your MeTube settings.';
+    }
+  }
+
+  isSpotifyMusicContent(): boolean {
+    const contentType = this.getSpotifyContentType();
+    return ['track', 'album', 'playlist'].includes(contentType);
+  }
+
   addDownload(url?: string, quality?: string, format?: string, folder?: string, customNamePrefix?: string, playlistStrictMode?: boolean, playlistItemLimit?: number, autoStart?: boolean) {
     url = url ?? this.addUrl
     quality = quality ?? this.quality
@@ -263,12 +327,28 @@ export class AppComponent implements AfterViewInit {
     autoStart = autoStart ?? this.autoStart
 
     console.debug('Downloading: url='+url+' quality='+quality+' format='+format+' folder='+folder+' customNamePrefix='+customNamePrefix+' playlistStrictMode='+playlistStrictMode+' playlistItemLimit='+playlistItemLimit+' autoStart='+autoStart);
+    
+    // Log Spotify URL processing (no longer blocking)
+    if (this.detectSpotifyUrl(url)) {
+      const contentType = this.getSpotifyContentType();
+      console.log(`Processing Spotify ${contentType}: ${url}`);
+      if (this.isSpotifyMusicContent()) {
+        console.log('Will search for tracks on YouTube and download them');
+      }
+    }
+
     this.addInProgress = true;
     this.downloads.add(url, quality, format, folder, customNamePrefix, playlistStrictMode, playlistItemLimit, autoStart).subscribe((status: Status) => {
       if (status.status === 'error') {
-        alert(`Error adding URL: ${status.msg}`);
+        // Enhanced error message for Spotify URLs
+        if (this.detectSpotifyUrl(url)) {
+          alert(`Error adding Spotify URL: ${status.msg}\n\nNote: Most Spotify content is DRM-protected and cannot be downloaded. Only some podcast content may be accessible.`);
+        } else {
+          alert(`Error adding URL: ${status.msg}`);
+        }
       } else {
         this.addUrl = '';
+        this.isSpotifyUrl = false;
       }
       this.addInProgress = false;
     });
